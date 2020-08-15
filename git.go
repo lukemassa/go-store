@@ -1,96 +1,74 @@
 package store
 
-/*
+import (
+	"context"
+	"time"
 
-// Config configure the store
-type Config struct {
-	// How frequently the store is updated
-	// Defaults to 60 seconds
-	UpdateInterval time.Duration
+	"gopkg.in/src-d/go-billy.v4/memfs"
+	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/storage/memory"
+)
 
-	// The max amount of time for the update function to run
-	// Must be less than the update interval
-	// Defaults to 50 seconds
-	UpdateTimeout time.Duration
-
-	// How long the updated value is valid for. After this time,
-	// Get() will return an error. Should be several multiples of
-	// the UpdateInterval so updates are allowed to fail.
-	//
-	// If set to 0 (the default), entries are always valid.
-	// However, in most cases this is inappropriate and should be set
-	ResultValidity time.Duration
-}
-
-// Store a store to hold the value
+// GitRepoStore a store to hold the value
 type GitRepoStore struct {
-	store Store
-	gitUrl string
+	store    Store
+	worktree *git.Worktree
+	gitURL   string
 }
 
-func NewGitRepo(gitUrl string, config Config) GitRepoStore {
-	store := New()
-}
-
-type cacheValue struct {
-	value interface{}
-	err   error
-}
-
-// New create a new store
-// Function called to get the current value of the store
-// It will be passed a new context that deadlines at
-// updateTimeout, which it should respect
-func New(updateFunc func(context.Context) (interface{}, error), config Config) Store {
-	store := Store{
-		updateFunc: updateFunc,
+// NewGitRepo store the result of an http get call
+func NewGitRepo(gitURL string, config Config) GitRepoStore {
+	ret := GitRepoStore{
+		gitURL: gitURL,
 	}
-
-	if config.UpdateInterval == 0 {
-		config.UpdateInterval = 60 * time.Second
-	}
-	if config.UpdateTimeout == 0 {
-		config.UpdateTimeout = 50 * time.Second
-	}
-	if config.UpdateTimeout > config.UpdateInterval {
-		panic("Update timeout cannot be longer than update interval")
-	}
-	store.config = config
-	store.cache = cache.New(config.ResultValidity, 0)
-	store.start()
-
-	return store
-}
-
-func (s *Store) start() {
-
-	ticker := time.NewTicker(s.config.UpdateInterval)
-	go func() {
-		for ; true; <-ticker.C {
-			s.update()
+	store := New(func(ctx context.Context) (interface{}, error) {
+		err := ret.setupRepo(ctx)
+		if err != nil {
+			return nil, err
 		}
-	}()
-}
-func (s *Store) update() {
-	ctx, cancel := context.WithTimeout(context.TODO(), s.config.UpdateTimeout)
-	defer cancel()
 
-	val, err := s.updateFunc(ctx)
-	s.cache.Set("value", cacheValue{
-		value: val,
-		err:   err,
-	}, s.config.ResultValidity)
+		err = ret.worktree.PullContext(ctx, &git.PullOptions{})
+
+		if err != nil && err != git.NoErrAlreadyUpToDate {
+			return nil, err
+		}
+		return ret.worktree, nil
+	}, config)
+	ret.store = store
+
+	return ret
 }
 
-// Get the value from the store
-func (s *Store) Get() (interface{}, error) {
-	val, ok := s.cache.Get("value")
-	if !ok {
-		return nil, errors.New("Value has not yet been set, or has expired")
+func (s *GitRepoStore) setupRepo(ctx context.Context) error {
+	if s.worktree != nil {
+		return nil
 	}
-	// This is safe because I'm the only one who puts anything into the value
-	return val.(cacheValue).value, val.(cacheValue).err
+
+	fs := memfs.New()
+	repo, err := git.Clone(memory.NewStorage(), fs, &git.CloneOptions{
+		URL: s.gitURL,
+	})
+	if err != nil {
+		return err
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	s.worktree = worktree
+	return nil
 }
 
+// Get gets the result of the http call
+func (s *GitRepoStore) Get() (*git.Worktree, error) {
+	res, err := s.store.Get()
+	if err != nil {
+		return nil, err
+	}
+	return res.(*git.Worktree), err
+}
 
-*/
+// Wait until value is available
+func (s *GitRepoStore) Wait(maxWait time.Duration) error {
+	return s.store.Wait(maxWait)
+}

@@ -31,6 +31,9 @@ func NewHTTP(url string, config Config) HTTPStore {
 // Get gets the result of the http call
 func (s *HTTPStore) Get() ([]byte, error) {
 	res, err := s.store.Get()
+	if err != nil {
+		return nil, err
+	}
 	return res.([]byte), err
 }
 
