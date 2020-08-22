@@ -84,6 +84,7 @@ func (s *Store) start() {
 	}()
 }
 func (s *Store) update() {
+	// A single run of the updater
 	ctx, cancel := context.WithTimeout(context.TODO(), s.config.UpdateTimeout)
 	defer cancel()
 
